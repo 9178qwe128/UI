@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>云海台风 · 真实感天空模拟</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:100%; height:100%; overflow:hidden; background:#0b1520;
+    font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif; }
+  #scene { position:fixed; inset:0; display:block; }
+  .ui { position:fixed; top:28px; left:32px; color:#fff; z-index:5; pointer-events:none;
+    text-shadow:0 2px 12px rgba(0,20,40,.45); }
+  .ui h1 { font-size:30px; letter-spacing:6px; font-weight:600; }
+  .ui p { margin-top:6px; font-size:13px; opacity:.85; letter-spacing:2px; }
+  .panel { position:fixed; left:50%; bottom:26px; transform:translateX(-50%); z-index:5;
+    display:flex; align-items:center; justify-content:center; flex-wrap:wrap; gap:16px;
+    padding:12px 20px; border-radius:16px; background:rgba(10,25,40,.38);
+    backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
+    border:1px solid rgba(255,255,255,.18); color:#eef6ff;
+    box-shadow:0 8px 30px rgba(0,0,0,.25); }
+  .panel button { cursor:pointer; border:none; border-radius:12px; padding:10px 22px;
+    font-size:15px; letter-spacing:2px; color:#06263f; font-weight:600;
+    background:linear-gradient(135deg,#8fd0ff,#e8f7ff);
+    transition:transform .15s, box-shadow .15s; }
+  .panel button:hover { transform:translateY(-1px); box-shadow:0 6px 18px rgba(140,200,255,.5); }
+  .panel button.storm { color:#fff; background:linear-gradient(135deg,#3a4b5c,#16222e); }
+  .panel label { display:flex; align-items:center; gap:10px; font-size:13px; letter-spacing:1px; }
+  .panel input[type=range]{ width:150px; accent-color:#8fd0ff; }
+  #status { min-width:76px; text-align:center; font-size:13px; letter-spacing:2px;
+    padding:6px 10px; border-radius:10px; background:rgba(255,255,255,.12); }
+  .hint { position:fixed; right:26px; bottom:32px; z-index:5; color:rgba(255,255,255,.65);
+    font-size:12px; letter-spacing:1px; pointer-events:none; }
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+<div class="ui">
+  <h1>云海台风</h1>
+  <p>FRACTAL CLOUDS · TYPHOON SIMULATION</p>
+</div>
+<div class="panel">
+  <button id="stormBtn">台风来袭</button>
+  <label>强度<input id="intensity" type="range" min="0" max="100" value="0"></label>
+  <span id="status">晴朗微风</span>
+</div>
+<div class="hint">移动鼠标改变视角 · 点击按钮召唤台风</div>
+
+<script>
+'use strict';
+/* ---------------- 工具 ---------------- */
+const canvas = document.getElementById('scene');
+const ctx = canvas.getContext('2d');
+let W = 0, H = 0, seaTop = 0, vignette = null;
+
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+const rand = (a = 1, b) => b === undefined ? Math.random() * a : a + Math.random() * (b - a);
+const lerp = (a, b, t) => a + (b - a) * t;
+const lerpC = (c1, c2, t) => [lerp(c1[0], c2[0], t) | 0, lerp(c1[1], c2[1], t) | 0, lerp(c1[2], c2[2], t) | 0];
+const css = c => `rgb(${c[0]},${c[1]},${c[2]})`;
+
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+/* 值噪声 + 分形叠加（fbm），用于生成真实感云的密度场 */
+function createNoise(seed) {
+  const SIZE = 256, rnd = mulberry32(seed), grid = new Float32Array(SIZE * SIZE);
+  for (let i = 0; i < grid.length; i++) grid[i] = rnd();
+  const at = (x, y) => grid[(((y % SIZE) + SIZE) % SIZE) * SIZE + (((x % SIZE) + SIZE) % SIZE)];
+  function noise(x, y) {
+    const xi = Math.floor(x), yi = Math.floor(y);
+    const xf = x - xi, yf = y - yi;
+    const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+    const a = at(xi, yi), b = at(xi + 1, yi), c = at(xi, yi + 1), d = at(xi + 1, yi + 1);
+    return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+  }
+  return function fbm(x, y, oct = 5) {
+    let val = 0, amp = .5, f = 1, mx = 0;
+    for (let i = 0; i < oct; i++) { val += noise(x * f, y * f) * amp; mx += amp; amp *= .5; f *= 2; }
+    return val / mx;
+  };
+}
+
+/* ---------------- 云贴图：分形噪声 + 顶部光照 ---------------- */
+function makeCloudSprite(w, h, seed) {
+  const fbm = createNoise(seed);
+  const cnv = document.createElement('canvas');
+  cnv.width = w; cnv.height = h;
+  const c = cnv.getContext('2d');
+  const den = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const nx = x / w - 0.5, ny = y / h - 0.5;
+    const d = Math.sqrt(nx * nx * 1.05 + ny * ny * 2.6) * 2;   // 椭圆衰减，云更扁
+    const fall = Math.pow(Math.max(0, 1 - d), 0.8);            // 边缘强制归零，避免裁剪痕迹
+    const n = (fbm(x * 0.021, y * 0.024, 5) * 0.9 + 0.25) * fall - 0.12;
+    den[y * w + x] = clamp(n, 0, 1);
+  }
+  const img = c.createImageData(w, h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = y * w + x, d0 = den[i];
+    const a = Math.pow(smoothstep(0.08, 0.55, d0), 1.25);
+    const above = y > 3 ? den[i - 4 * w] : d0;
+    const lit = clamp(0.68 + (d0 - above) * 2.2, 0, 1);       // 阳光从上方照射，顶部更亮
+    const vert = 1 - (y / h) * 0.30;                           // 云底偏灰
+    const shade = (185 + 70 * lit) * vert;
+    const p = i * 4;
+    img.data[p] = Math.min(255, shade + 6);
+    img.data[p + 1] = Math.min(255, shade + 9);
+    img.data[p + 2] = Math.min(255, shade + 20);
+    img.data[p + 3] = a * 255;
+  }
+  c.putImageData(img, 0, 0);
+  return cnv;
+}
+
+const sprites = [
+  makeCloudSprite(380, 210, 11), makeCloudSprite(330, 180, 23),
+  makeCloudSprite(420, 220, 37), makeCloudSprite(300, 170, 49),
+  makeCloudSprite(360, 200, 55), makeCloudSprite(280, 160, 66)
+];
+
+/* ---------------- 台风贴图：螺旋云带 + 风眼 ---------------- */
+const TY_SZ = 920;
+function drawWisp(c, x, y, len, wid, ang, alpha, tone) {
+  c.save();
+  c.translate(x, y);
+  c.rotate(ang);
+  c.scale(1, wid / len);
+  const g = c.createRadialGradient(0, 0, 0, 0, 0, len / 2);
+  g.addColorStop(0, `rgba(${tone},${tone + 3},${Math.min(255, tone + 12)},${alpha})`);
+  g.addColorStop(0.6, `rgba(${tone},${tone + 3},${Math.min(255, tone + 12)},${alpha * 0.5})`);
+  g.addColorStop(1, 'rgba(240,245,250,0)');
+  c.fillStyle = g;
+  c.beginPath(); c.arc(0, 0, len / 2, 0, Math.PI * 2); c.fill();
+  c.restore();
+}
+function makeTyphoon() {
+  const sz = TY_SZ;
+  const cnv = document.createElement('canvas');
+  cnv.width = cnv.height = sz;
+  const c = cnv.getContext('2d');
+  const cx = sz / 2, cy = sz / 2;
+
+  // 中心密集云区（CDO）
+  for (let i = 0; i < 150; i++) {
+    const ang = rand(Math.PI * 2), r = sz * 0.26 * Math.sqrt(Math.random());
+    drawWisp(c, cx + Math.cos(ang) * r, cy + Math.sin(ang) * r,
+      36 + r * 0.28, (36 + r * 0.28) * rand(0.35, 0.5), ang + Math.PI / 2, rand(0.07, 0.14), 232 + rand(0, 20) | 0);
+  }
+  // 螺旋雨带
+  const arms = 4;
+  for (let arm = 0; arm < arms; arm++) {
+    const off = (Math.PI * 2 / arms) * arm + rand(-0.25, 0.25);
+    for (let t = 0; t < 1; t += 0.013) {
+      const theta = off + t * Math.PI * 2.7;
+      const r = sz * 0.055 * Math.exp(0.26 * theta);
+      if (r > sz * 0.5) break;
+      const fade = 1 - smoothstep(0.34, 0.5, r / sz);
+      const alpha = 0.14 * Math.sin(Math.min(1, t * 1.15) * Math.PI) * fade * rand(0.6, 1.3);
+      const len = 26 + r * 0.18 + rand(0, 18);
+      drawWisp(c, cx + Math.cos(theta) * r, cy + Math.sin(theta) * r,
+        len, len * rand(0.32, 0.45), theta + Math.PI / 2 + 0.45, alpha, 228 + rand(0, 24) | 0);
+    }
+  }
+  // 眼壁亮环
+  for (let i = 0; i < 30; i++) {
+    const ang = (i / 30) * Math.PI * 2;
+    drawWisp(c, cx + Math.cos(ang) * sz * 0.062, cy + Math.sin(ang) * sz * 0.062,
+      24, 12, ang + Math.PI / 2, 0.5, 250);
+  }
+  // 掏出风眼
+  c.globalCompositeOperation = 'destination-out';
+  const eg = c.createRadialGradient(cx, cy, 0, cx, cy, sz * 0.052);
+  eg.addColorStop(0, 'rgba(0,0,0,1)');
+  eg.addColorStop(0.55, 'rgba(0,0,0,0.95)');
+  eg.addColorStop(1, 'rgba(0,0,0,0)');
+  c.fillStyle = eg;
+  c.fillRect(0, 0, sz, sz);
+  c.globalCompositeOperation = 'source-over';
+
+  // 整体轻微柔化
+  const out = document.createElement('canvas');
+  out.width = out.height = sz;
+  const oc = out.getContext('2d');
+  try { oc.filter = 'blur(2px)'; } catch (e) {}
+  oc.drawImage(cnv, 0, 0);
+  return out;
+}
+const tyCanvas = makeTyphoon();
+let tyAngle = rand(Math.PI * 2);
+
+/* ---------------- 场景对象 ---------------- */
+const clouds = [];
+function initClouds() {
+  clouds.length = 0;
+  for (let i = 0; i < 15; i++) {
+    clouds.push({
+      x: Math.random() * 1.3,            // 屏幕宽度的分数坐标
+      y: rand(0.02, 0.72),
+      depth: rand(0.25, 1),
+      sp: sprites[(Math.random() * sprites.length) | 0],
+      sc: rand(0.7, 1.35)
+    });
+  }
+  clouds.sort((a, b) => a.depth - b.depth);
+}
+
+const drops = [];
+function initRain() {
+  drops.length = 0;
+  for (let i = 0; i < 420; i++) drops.push({ x: rand(-W * 0.2, W * 1.2), y: rand(-H, H) });
+}
+
+function makeVignette() {
+  vignette = document.createElement('canvas');
+  vignette.width = 256; vignette.height = 256;
+  const c = vignette.getContext('2d');
+  const g = c.createRadialGradient(128, 128, 90, 128, 128, 190);
+  g.addColorStop(0, 'rgba(8,14,22,0)');
+  g.addColorStop(1, 'rgba(8,14,22,0.38)');
+  c.fillStyle = g;
+  c.fillRect(0, 0, 256, 256);
+}
+
+function resize() {
+  const DPR = Math.min(window.devicePixelRatio || 1, 1.75);
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = W * DPR; canvas.height = H * DPR;
+  canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  seaTop = H * 0.78;
+  makeVignette();
+  initRain();
+}
+window.addEventListener('resize', resize);
+resize();
+initClouds();
+
+/* ---------------- 交互状态 ---------------- */
+let storm = 0, stormTarget = 0;         // 0 晴朗 → 1 台风
+let mnx = 0, mny = 0;
+let flash = 0, bolt = null;
+let time = 0;
+
+const btn = document.getElementById('stormBtn');
+const slider = document.getElementById('intensity');
+const statusEl = document.getElementById('status');
+let lastStatus = '';
+
+function syncUI() {
+  const on = stormTarget > 0.05;
+  btn.textContent = on ? '台风散去' : '台风来袭';
+  btn.classList.toggle('storm', on);
+}
+btn.addEventListener('click', () => {
+  stormTarget = stormTarget > 0.05 ? 0 : 0.85;
+  slider.value = Math.round(stormTarget * 100);
+  syncUI();
+});
+slider.addEventListener('input', () => {
+  stormTarget = slider.value / 100;
+  syncUI();
+});
+window.addEventListener('mousemove', e => {
+  mnx = (e.clientX / W) * 2 - 1;
+  mny = (e.clientY / H) * 2 - 1;
+});
+
+const SKY = { td: [66, 135, 210], bd: [175, 216, 242], ts: [36, 44, 54], bs: [92, 104, 116] };
+const SEA = { td: [30, 102, 156], bd: [10, 48, 84], ts: [26, 38, 50], bs: [8, 14, 20] };
+
+function makeBolt() {
+  const pts = [];
+  let x = rand(W * 0.15, W * 0.85), y = rand(H * 0.05, H * 0.2);
+  pts.push([x, y]);
+  while (y < seaTop) { x += rand(-36, 36); y += rand(18, 44); pts.push([x, y]); }
+  bolt = pts;
+}
+
+/* ---------------- 主循环 ---------------- */
+let prev = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - prev) / 1000);
+  prev = now;
+  time += dt;
+  storm += (stormTarget - storm) * Math.min(1, dt * 0.6);
+  const s = storm;
+  const windPx = 6 + 190 * s;
+
+  /* 天空 */
+  const skyG = ctx.createLinearGradient(0, 0, 0, H);
+  skyG.addColorStop(0, css(lerpC(SKY.td, SKY.ts, s)));
+  skyG.addColorStop(1, css(lerpC(SKY.bd, SKY.bs, s)));
+  ctx.fillStyle = skyG;
+  ctx.fillRect(0, 0, W, H);
+
+  /* 太阳（风暴增强时快速隐去） */
+  const sunA = 1 - smoothstep(0.15, 0.65, s);
+  if (sunA > 0.01) {
+    const sx = W * 0.76 + mnx * 4, sy = H * 0.18 + mny * 3;
+    const glow = ctx.createRadialGradient(sx, sy, 0, sx, sy, H * 0.5);
+    glow.addColorStop(0, `rgba(255,243,214,${0.55 * sunA})`);
+    glow.addColorStop(0.25, `rgba(255,236,190,${0.22 * sunA})`);
+    glow.addColorStop(1, 'rgba(255,236,190,0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, W, seaTop);
+    ctx.beginPath();
+    ctx.arc(sx, sy, 30, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(255,252,240,${0.9 * sunA})`;
+    ctx.fill();
+  }
+
+  /* 云 */
+  for (const cl of clouds) {
+    const dw = Math.max(90, W * 0.13 * lerp(0.45, 1, cl.depth)) * cl.sc;
+    const dh = dw * cl.sp.height / cl.sp.width;
+    cl.x += (windPx * cl.depth * dt) / W;
+    const fw = dw / W;
+    if (cl.x > 1 + fw * 0.5) {
+      cl.x = -fw - rand(0.05);
+      cl.y = rand(0.02, 0.72);
+      cl.sp = sprites[(Math.random() * sprites.length) | 0];
+    }
+    const px = cl.x * W + mnx * 14 * cl.depth;
+    const py = cl.y * seaTop * 0.85 - dh * 0.4 + mny * 8 * cl.depth;
+    ctx.globalAlpha = lerp(0.55, 0.95, cl.depth) * (1 - s * 0.45);
+    ctx.drawImage(cl.sp, px, py, dw, dh);
+  }
+  ctx.globalAlpha = 1;
+
+  /* 远方风暴云墙 */
+  if (s > 0.02) {
+    const wallG = ctx.createLinearGradient(0, seaTop - 180, 0, seaTop);
+    wallG.addColorStop(0, 'rgba(52,62,72,0)');
+    wallG.addColorStop(1, `rgba(52,62,72,${0.55 * s})`);
+    ctx.fillStyle = wallG;
+    ctx.fillRect(0, seaTop - 180, W, 180);
+  }
+
+  /* 台风 */
+  const tyA = smoothstep(0.02, 0.4, s);
+  if (tyA > 0.001) {
+    ctx.save();
+    ctx.globalAlpha = tyA;
+    const cover = Math.min(W * 1.05, H * 1.5);
+    const scale = (cover / TY_SZ) * (0.5 + 0.7 * s);
+    ctx.translate(W * 0.6 + mnx * 7, H * 0.34 + mny * 5);
+    ctx.rotate(tyAngle);
+    ctx.drawImage(tyCanvas, -TY_SZ * scale / 2, -TY_SZ * scale / 2, TY_SZ * scale, TY_SZ * scale);
+    ctx.restore();
+  }
+  tyAngle -= dt * (0.12 + 0.55 * s);
+
+  /* 风暴压暗 */
+  if (s > 0.02) {
+    ctx.fillStyle = `rgba(20,28,38,${0.30 * s})`;
+    ctx.fillRect(0, 0, W, seaTop);
+  }
+
+  /* 海面 */
+  const seaG = ctx.createLinearGradient(0, seaTop, 0, H);
+  seaG.addColorStop(0, css(lerpC(SEA.td, SEA.ts, s)));
+  seaG.addColorStop(1, css(lerpC(SEA.bd, SEA.bs, s)));
+  ctx.fillStyle = seaG;
+  ctx.fillRect(0, seaTop, W, H - seaTop);
+  ctx.fillStyle = `rgba(255,255,255,${0.12 * (1 - s * 0.5)})`;
+  ctx.fillRect(0, seaTop, W, 1);
+
+  /* 浪 */
+  const rows = 6;
+  ctx.lineWidth = 1.4;
+  for (let i = 0; i < rows; i++) {
+    const t = i / (rows - 1);
+    const y = seaTop + 8 + t * (H - seaTop) * 0.85;
+    const amp = (2 + t * 4) * (1 + s * 3.2);
+    ctx.beginPath();
+    for (let x = 0; x <= W; x += 14) {
+      const yy = y + Math.sin(x * 0.02 + time * 1.4 + i * 1.7) * amp
+                  + Math.sin(x * 0.008 - time * 0.9 + i) * amp * 0.6;
+      x === 0 ? ctx.moveTo(x, yy) : ctx.lineTo(x, yy);
+    }
+    ctx.strokeStyle = `rgba(255,255,255,${(0.05 + t * 0.10) * (0.5 + s * 0.9)})`;
+    ctx.stroke();
+  }
+
+  /* 雨 */
+  const active = Math.floor(420 * s);
+  if (active > 0) {
+    const vx = windPx * 1.6, vy = 650 + 550 * s;
+    ctx.beginPath();
+    for (let i = 0; i < active; i++) {
+      const d = drops[i];
+      d.x += vx * dt; d.y += vy * dt;
+      if (d.y > H) { d.y = rand(-120, -10); d.x = rand(-W * 0.2, W * 1.1); }
+      if (d.x > W + 60) d.x -= W * 1.3;
+      ctx.moveTo(d.x, d.y);
+      ctx.lineTo(d.x - vx * 0.03, d.y - vy * 0.03);
+    }
+    ctx.strokeStyle = 'rgba(200,220,240,0.28)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  /* 闪电 */
+  if (s > 0.62 && Math.random() < dt * 0.7) { flash = 1; makeBolt(); }
+  if (flash > 0.03) {
+    ctx.fillStyle = `rgba(255,255,255,${flash * 0.22})`;
+    ctx.fillRect(0, 0, W, H);
+    if (bolt) {
+      ctx.save();
+      ctx.strokeStyle = `rgba(230,242,255,${flash * 0.9})`;
+      ctx.lineWidth = 2.5;
+      ctx.shadowBlur = 20;
+      ctx.shadowColor = '#bcd8ff';
+      ctx.beginPath();
+      bolt.forEach(([x, y], i) => i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y));
+      ctx.stroke();
+      ctx.restore();
+    }
+    flash *= Math.pow(0.0015, dt);
+  }
+
+  /* 暗角 */
+  ctx.drawImage(vignette, 0, 0, W, H);
+
+  /* 状态文字 */
+  const st = s < 0.15 ? '晴朗微风' : s < 0.4 ? '风起云涌' : s < 0.7 ? '暴雨将至' : '台风过境';
+  if (st !== lastStatus) { statusEl.textContent = st; lastStatus = st; }
+
+  requestAnimationFrame(frame);
+}
+syncUI();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
