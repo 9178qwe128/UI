@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>卫星云图 · 台风增强色</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body, #map { height:100%; width:100%; }
+  body { font-family:"PingFang SC","Microsoft YaHei",system-ui,-apple-system,sans-serif; overflow:hidden; background:#05070d; }
+  .leaflet-container { background:#05070d; }
+
+  .panel {
+    position:absolute; top:16px; left:16px; z-index:1000; width:302px;
+    background:rgba(10,14,24,.8); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
+    border:1px solid rgba(255,255,255,.09); border-radius:14px;
+    padding:16px 18px 14px; color:#e8ecf4; box-shadow:0 8px 32px rgba(0,0,0,.55);
+  }
+  .panel h1 { font-size:15px; font-weight:600; letter-spacing:.5px; display:flex; align-items:center; gap:8px; }
+  .live { width:8px; height:8px; border-radius:50%; background:#ff4d4f; flex:none; animation:pulse 1.6s infinite; }
+  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(255,77,79,.55)} 70%{box-shadow:0 0 0 8px rgba(255,77,79,0)} 100%{box-shadow:0 0 0 0 rgba(255,77,79,0)} }
+  .status { margin-left:auto; font-size:11px; font-weight:400; color:#38bdf8; }
+
+  .row { margin-top:14px; display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:13px; }
+  .row label { color:#aeb6c8; flex:none; }
+  .row input[type=range] { flex:1; accent-color:#38bdf8; height:22px; cursor:pointer; }
+
+  .sw { position:relative; width:42px; height:22px; appearance:none; -webkit-appearance:none; background:#2a3346; border-radius:11px; cursor:pointer; transition:.2s; outline:none; flex:none; }
+  .sw:checked { background:#38bdf8; }
+  .sw::after { content:''; position:absolute; top:3px; left:3px; width:16px; height:16px; border-radius:50%; background:#fff; transition:.2s; }
+  .sw:checked::after { left:23px; }
+
+  .play { width:34px; height:34px; flex:none; border-radius:50%; border:1px solid rgba(255,255,255,.16); background:rgba(56,189,248,.14); color:#38bdf8; font-size:13px; cursor:pointer; transition:.15s; }
+  .play:hover { background:rgba(56,189,248,.3); }
+  .time { font-variant-numeric:tabular-nums; font-size:11.5px; color:#8fa3bf; }
+
+  .legend { margin-top:16px; }
+  .legend canvas { width:100%; height:12px; border-radius:6px; display:block; }
+  .legend .lab { display:flex; justify-content:space-between; font-size:10px; color:#7c8aa5; margin-top:4px; }
+
+  .src { margin-top:12px; padding-top:10px; border-top:1px solid rgba(255,255,255,.07); font-size:10.5px; color:#66738c; line-height:1.6; }
+
+  @media (max-width:520px) {
+    .panel { width:calc(100% - 24px); left:12px; top:12px; padding:12px 14px; }
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div class="panel">
+  <h1><span class="live"></span>卫星云图 · 台风增强色<span class="status" id="status"></span></h1>
+
+  <div class="row">
+    <label for="enh">台风增强色</label>
+    <input id="enh" type="checkbox" class="sw" checked>
+  </div>
+
+  <div class="row">
+    <label for="op">云层透明度</label>
+    <input id="op" type="range" min="30" max="100" value="85">
+  </div>
+
+  <div class="row" style="justify-content:flex-start">
+    <button class="play" id="play" title="播放 / 暂停">▶</button>
+    <input id="tl" type="range" min="0" max="23" value="23">
+  </div>
+
+  <div class="row" style="margin-top:4px">
+    <span class="time" id="time">--</span>
+    <span class="time" id="frame"></span>
+  </div>
+
+  <div class="legend">
+    <canvas id="lg" width="266" height="12"></canvas>
+    <div class="lab"><span>海面 / 暖云</span><span>高云</span><span>强对流云顶</span></div>
+  </div>
+
+  <div class="src">数据：NASA GIBS · 向日葵-8/9 红外 Band13（每 10 分钟更新）<br>增强：红外增强配色（Dvorak 风格），颜色越艳云顶越高越冷</div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+/* ---------------- 台风增强色查找表（亮度 -> RGB） ---------------- */
+const STOPS = [
+  [  0,  10, 14, 40],   // 海面（暖）
+  [ 90,  35, 40, 70],
+  [105,  70, 74, 84],
+  [125, 112,116,126],   // 低云 / 暖云：灰阶
+  [145, 142,146,156],
+  [152, 150,200,235],   // 浅蓝
+  [165,  60,190,255],   // 蓝
+  [178,   0,228,198],   // 青
+  [190,  30,208, 92],   // 绿
+  [202, 255,236,  0],   // 黄
+  [215, 255,148,  0],   // 橙
+  [228, 255, 42, 32],   // 红
+  [240, 218,  0,255],   // 品红
+  [248, 150, 80,255],   // 紫
+  [255, 255,255,255]    // 强对流云顶：白
+];
+const LUT = new Uint8ClampedArray(768);
+(function buildLUT(){
+  let k = 0;
+  for (let v = 0; v < 256; v++) {
+    while (k < STOPS.length - 2 && v > STOPS[k+1][0]) k++;
+    const a = STOPS[k], b = STOPS[k+1];
+    const t = b[0] > a[0] ? (v - a[0]) / (b[0] - a[0]) : 0;
+    LUT[v*3]   = a[1] + (b[1]-a[1]) * t;
+    LUT[v*3+1] = a[2] + (b[2]-a[2]) * t;
+    LUT[v*3+2] = a[3] + (b[3]-a[3]) * t;
+  }
+})();
+
+/* ---------------- 云图瓦片图层（canvas 实时上色） ---------------- */
+const TILE_URL = 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/Himawari_AHI_Band13_Clean_Infrared/default/{t}/GoogleMapsCompatible_Level6/{z}/{y}/{x}.png';
+
+const EnhanceLayer = L.TileLayer.extend({
+  initialize: function (url, options) {
+    L.TileLayer.prototype.initialize.call(this, url, options);
+    this._imgCache = new Map(); // url -> Image，避免切帧/换色时重复下载
+  },
+  getTileUrl: function (coords) {
+    return this._url
+      .replace('{t}', this.options.time)
+      .replace('{z}', this._getZoomForUrl())
+      .replace('{y}', coords.y)
+      .replace('{x}', coords.x);
+  },
+  createTile: function (coords, done) {
+    const size = this.getTileSize();
+    const canvas = document.createElement('canvas');
+    canvas.width = size.x; canvas.height = size.y;
+    const url = this.getTileUrl(coords);
+
+    const draw = (img) => {
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (img && img.naturalWidth) {
+        ctx.drawImage(img, 0, 0, size.x, size.y);
+        if (this.options.enhanced) {
+          const d = ctx.getImageData(0, 0, size.x, size.y);
+          const p = d.data;
+          for (let i = 0; i < p.length; i += 4) {
+            if (p[i+3] === 0) continue;            // 圆盘外透明区跳过
+            const v = (p[i]*77 + p[i+1]*150 + p[i+2]*29) >> 8; // 亮度
+            const o = v * 3;
+            p[i] = LUT[o]; p[i+1] = LUT[o+1]; p[i+2] = LUT[o+2];
+          }
+          ctx.putImageData(d, 0, 0);
+        }
+      }
+      done(null, canvas);
+    };
+
+    const cached = this._imgCache.get(url);
+    if (cached && cached.complete && cached.naturalWidth) {
+      // 必须异步回调：Leaflet 在 createTile 返回后才登记瓦片，同步 done 会被丢弃
+      setTimeout(() => draw(cached), 0);
+    } else {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload  = () => {
+        if (this._imgCache.size > 200) {          // 限制缓存体积
+          this._imgCache.delete(this._imgCache.keys().next().value);
+        }
+        this._imgCache.set(url, img);
+        draw(img);
+      };
+      img.onerror = () => done(null, canvas);      // 缺帧时留空，不报错
+      img.src = url;
+    }
+    return canvas;
+  }
+});
+
+/* ---------------- 时间轴：最近 4 小时，每 10 分钟一帧 ---------------- */
+const FRAME_N = 24, STEP = 600000, LATENCY = 50 * 60000;
+let frames = [], idx = FRAME_N - 1;
+
+function buildFrames() {
+  const latest = Math.floor((Date.now() - LATENCY) / STEP) * STEP;
+  const wasLast = (idx === frames.length - 1);
+  frames = [];
+  for (let i = FRAME_N - 1; i >= 0; i--) frames.push(latest - i * STEP);
+  if (wasLast) idx = FRAME_N - 1;
+}
+
+/* 帧可用性探测：GIBS 个别时刻缺图，提前标记，避免切到空白帧 */
+const badFrames = new Set();
+function probeFrames() {
+  frames.forEach((ms) => {
+    const url = TILE_URL.replace('{t}', new Date(ms).toISOString().replace('.000', ''))
+                        .replace('{z}', 3).replace('{y}', 3).replace('{x}', 7);
+    fetch(url).then(r => r.ok ? badFrames.delete(ms) : badFrames.add(ms))
+              .catch(() => badFrames.add(ms));
+  });
+}
+
+/* ---------------- 地图 ---------------- */
+const map = L.map('map', {
+  center: [20, 128], zoom: 4, minZoom: 3, maxZoom: 9,
+  zoomControl: false, worldCopyJump: true, attributionControl: false
+});
+L.control.zoom({ position: 'bottomright' }).addTo(map);
+L.control.attribution({ position: 'bottomright', prefix: false }).addTo(map);
+
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+  maxZoom: 16, attribution: '底图 © Esri'
+}).addTo(map);
+
+/* ---------------- 双层缓冲：新帧加载完成后再替换旧帧，动画不闪空 ---------------- */
+function makeLayer() {
+  return new EnhanceLayer(TILE_URL, {
+    tileSize: 256, maxNativeZoom: 6, maxZoom: 9,
+    enhanced: true, time: '',
+    attribution: '云图: NASA GIBS · JMA 向日葵-8/9'
+  });
+}
+const layers = [makeLayer(), makeLayer()];
+let cur = 0, userOpacity = .85, swapToken = 0;
+let playing = false, stepTO = null, fallbackTO = null;
+
+// 地名/边界参考线：独立窗格，始终在云图之上
+map.createPane('labels');
+map.getPane('labels').style.zIndex = 350;
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
+  maxZoom: 16, opacity: .9, pane: 'labels'
+}).addTo(map);
+
+/* ---------------- UI ---------------- */
+const $ = id => document.getElementById(id);
+const statusEl = $('status');
+
+function setFrame(i) {
+  idx = i;
+  $('tl').value = i;
+  const t = new Date(frames[i]).toISOString().replace('.000', '');
+  const missing = badFrames.has(frames[i]);
+  if (!missing && layers[cur].options.time !== t) {
+    const next = 1 - cur, nl = layers[next], token = ++swapToken;
+    nl.options.time = t;
+    nl.setOpacity(userOpacity);
+    statusEl.textContent = '加载中…';
+    nl.once('load', () => {
+      if (token !== swapToken) return;          // 已被更新的切换取代
+      map.removeLayer(layers[cur]);             // 此刻才撤下旧帧
+      cur = next;
+      statusEl.textContent = '';
+      if (playing) {                            // 自适应播放节奏：加载完再走下一帧
+        clearTimeout(fallbackTO);
+        clearTimeout(stepTO);
+        stepTO = setTimeout(playTick, 450);
+      }
+    });
+    nl.addTo(map);                              // 旧帧保持显示，新帧就绪后才替换
+  }
+  const d = new Date(frames[i]);
+  $('time').textContent = d.toLocaleString('zh-CN', {
+    timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false
+  }) + ' 北京时' + (missing ? '（该时刻缺图）' : '');
+  $('frame').textContent = (i + 1) + '/' + frames.length;
+}
+
+function playTick() {
+  if (!playing) return;
+  let n = idx;
+  for (let k = 0; k < frames.length; k++) {     // 跳过缺图帧
+    n = (n + 1) % frames.length;
+    if (!badFrames.has(frames[n])) break;
+  }
+  setFrame(n);
+  clearTimeout(fallbackTO);
+  fallbackTO = setTimeout(playTick, 5000);      // 网络异常时兜底推进
+}
+
+$('play').onclick = () => {
+  playing = !playing;
+  $('play').textContent = playing ? '⏸' : '▶';
+  if (playing) playTick();
+  else { clearTimeout(stepTO); clearTimeout(fallbackTO); }
+};
+$('tl').oninput  = e => setFrame(+e.target.value);
+$('enh').onchange = e => layers.forEach(l => { l.options.enhanced = e.target.checked; l.redraw(); });
+$('op').oninput  = e => { userOpacity = e.target.value / 100; layers[cur].setOpacity(userOpacity); };
+
+/* 色标 */
+(function paintLegend(){
+  const ctx = $('lg').getContext('2d');
+  for (let x = 0; x < 266; x++) {
+    const o = Math.round(x / 265 * 255) * 3;
+    ctx.fillStyle = `rgb(${LUT[o]},${LUT[o+1]},${LUT[o+2]})`;
+    ctx.fillRect(x, 0, 1, 12);
+  }
+})();
+
+/* ---------------- 启动 ---------------- */
+buildFrames();
+probeFrames();
+setFrame(FRAME_N - 1);
+setInterval(() => { buildFrames(); probeFrames(); }, 5 * 60000); // 每 5 分钟刷新可用帧
+</script>
+</body>
+</html>
