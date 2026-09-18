@@ -41,6 +41,51 @@
 
   .src { margin-top:12px; padding-top:10px; border-top:1px solid rgba(255,255,255,.07); font-size:10.5px; color:#66738c; line-height:1.6; }
 
+  /* 时间范围切换 */
+  .seg { display:flex; background:#1a2233; border-radius:8px; padding:2px; gap:2px; }
+  .seg button { border:0; background:transparent; color:#8fa3bf; font-size:12px; padding:4px 10px; border-radius:6px; cursor:pointer; transition:.15s; white-space:nowrap; }
+  .seg button.on { background:#38bdf8; color:#06222f; font-weight:600; }
+
+  /* 形成过程入口按钮 */
+  .howbtn { margin-top:14px; width:100%; padding:9px 0; border-radius:10px; border:1px solid rgba(56,189,248,.35); background:rgba(56,189,248,.1); color:#7dd3fc; font-size:13px; cursor:pointer; transition:.15s; }
+  .howbtn:hover { background:rgba(56,189,248,.22); }
+
+  /* 形成过程图解弹层 */
+  .overlay { position:fixed; inset:0; z-index:2000; background:rgba(3,6,12,.72); backdrop-filter:blur(6px); display:none; align-items:center; justify-content:center; padding:18px; }
+  .overlay.show { display:flex; }
+  .how { width:min(680px,96vw); background:rgba(12,18,30,.96); border:1px solid rgba(255,255,255,.1); border-radius:16px; padding:18px 22px 16px; color:#e8ecf4; position:relative; box-shadow:0 20px 60px rgba(0,0,0,.6); max-height:94vh; overflow:auto; }
+  .how h2 { font-size:16px; margin-bottom:10px; }
+  .how svg { width:100%; border-radius:10px; display:block; background:#0a1526; }
+  .close { position:absolute; top:10px; right:12px; width:28px; height:28px; border-radius:50%; border:0; background:rgba(255,255,255,.08); color:#cbd5e1; font-size:15px; cursor:pointer; }
+  .close:hover { background:rgba(255,255,255,.18); }
+  .cap { margin-top:12px; min-height:66px; }
+  .cap b { font-size:14px; color:#7dd3fc; }
+  .cap p { font-size:12.5px; color:#aeb6c8; line-height:1.7; margin-top:4px; }
+  .howNav { margin-top:10px; display:flex; align-items:center; justify-content:space-between; }
+  .howNav button { border:1px solid rgba(255,255,255,.14); background:rgba(255,255,255,.05); color:#cbd5e1; font-size:12.5px; padding:6px 14px; border-radius:8px; cursor:pointer; }
+  .howNav button:hover:not(:disabled) { background:rgba(56,189,248,.2); }
+  .howNav button:disabled { opacity:.35; cursor:default; }
+  .dots { display:flex; gap:8px; }
+  .dots span { width:9px; height:9px; border-radius:50%; background:#334155; cursor:pointer; transition:.2s; }
+  .dots span.on { background:#38bdf8; transform:scale(1.25); }
+
+  /* 图解 SVG 动画 */
+  .stg { opacity:0; transition:opacity .7s; }
+  .stg.on { opacity:1; }
+  .rise { animation:rise 2.4s linear infinite; }
+  @keyframes rise { 0%{opacity:0; transform:translateY(16px)} 25%{opacity:1} 80%{opacity:.9} 100%{opacity:0; transform:translateY(-30px)} }
+  .puff { animation:puff 3s ease-in-out infinite; transform-origin:320px 115px; }
+  @keyframes puff { 0%,100%{transform:scale(1)} 50%{transform:scale(1.06)} }
+  .blink { animation:blink 1.6s ease-in-out infinite; }
+  @keyframes blink { 0%,100%{opacity:.15} 50%{opacity:.85} }
+  .rain { animation:rain 1.2s linear infinite; }
+  @keyframes rain { 0%{opacity:0; transform:translateY(-4px)} 30%{opacity:1} 100%{opacity:0; transform:translateY(26px)} }
+  .spinSlow { animation:rotCCW 14s linear infinite; transform-origin:320px 180px; }
+  .spin { animation:rotCCW 6s linear infinite; transform-origin:320px 180px; }
+  @keyframes rotCCW { from{transform:rotate(0)} to{transform:rotate(-360deg)} }
+  .sink { animation:sink 1.6s ease-in-out infinite; }
+  @keyframes sink { 0%,100%{transform:translateY(-4px); opacity:.6} 50%{transform:translateY(6px); opacity:1} }
+
   @media (max-width:520px) {
     .panel { width:calc(100% - 24px); left:12px; top:12px; padding:12px 14px; }
   }
@@ -62,6 +107,14 @@
     <input id="op" type="range" min="30" max="100" value="85">
   </div>
 
+  <div class="row">
+    <label>时间范围</label>
+    <div class="seg">
+      <button data-m="live" class="on">实时 4 小时</button>
+      <button data-m="hist">近 5 天回放</button>
+    </div>
+  </div>
+
   <div class="row" style="justify-content:flex-start">
     <button class="play" id="play" title="播放 / 暂停">▶</button>
     <input id="tl" type="range" min="0" max="23" value="23">
@@ -77,7 +130,136 @@
     <div class="lab"><span>海面 / 暖云</span><span>高云</span><span>强对流云顶</span></div>
   </div>
 
-  <div class="src">数据：NASA GIBS · 向日葵-8/9 红外 Band13（每 10 分钟更新）<br>增强：红外增强配色（Dvorak 风格），颜色越艳云顶越高越冷</div>
+  <button class="howbtn" id="how">🌀 台风是怎么形成的？</button>
+
+  <div class="src">数据：NASA GIBS · 向日葵-8/9 红外 Band13｜实时 10 分钟/帧，回放 1 小时/帧<br>增强：红外增强配色（Dvorak 风格），颜色越艳云顶越高</div>
+</div>
+
+<!-- 台风形成过程图解弹层 -->
+<div class="overlay" id="howOverlay">
+  <div class="how">
+    <button class="close" id="howClose">✕</button>
+    <h2>🌀 台风的形成过程</h2>
+    <svg viewBox="0 0 640 360" aria-label="台风形成过程示意图">
+      <defs>
+        <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#0a1526"/><stop offset="1" stop-color="#16324f"/>
+        </linearGradient>
+        <linearGradient id="sea" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#0e4a72"/><stop offset="1" stop-color="#072a44"/>
+        </linearGradient>
+        <radialGradient id="warm" cx=".5" cy=".5" r=".5">
+          <stop offset="0" stop-color="#ffb703" stop-opacity=".9"/><stop offset="1" stop-color="#ff6d00" stop-opacity="0"/>
+        </radialGradient>
+        <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="#7dd3fc"/>
+        </marker>
+        <marker id="arrO" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="#fbbf24"/>
+        </marker>
+      </defs>
+
+      <rect width="640" height="360" fill="url(#sky)"/>
+      <rect y="292" width="640" height="68" fill="url(#sea)"/>
+      <path d="M0 292 Q16 285 32 292 T96 292 T160 292 T224 292 T288 292 T352 292 T416 292 T480 292 T544 292 T608 292 T672 292" stroke="#3a7ca5" fill="none" stroke-width="2" opacity=".6"/>
+
+      <!-- ① 暖洋面蒸发 -->
+      <g class="stg on" id="s1">
+        <circle cx="556" cy="58" r="24" fill="#ffd166" opacity=".9"/>
+        <g stroke="#ffd166" stroke-width="3" stroke-linecap="round" opacity=".55">
+          <line x1="556" y1="22" x2="556" y2="8"/><line x1="582" y1="32" x2="592" y2="22"/>
+          <line x1="592" y1="58" x2="606" y2="58"/><line x1="582" y1="84" x2="592" y2="94"/>
+          <line x1="530" y1="32" x2="520" y2="22"/><line x1="520" y1="58" x2="506" y2="58"/>
+        </g>
+        <ellipse cx="320" cy="298" rx="190" ry="24" fill="url(#warm)"/>
+        <g stroke="#7dd3fc" stroke-width="3" fill="none">
+          <line class="rise" x1="180" y1="282" x2="180" y2="196" marker-end="url(#arr)"/>
+          <line class="rise" style="animation-delay:.6s" x1="260" y1="282" x2="260" y2="186" marker-end="url(#arr)"/>
+          <line class="rise" style="animation-delay:1.2s" x1="340" y1="282" x2="340" y2="192" marker-end="url(#arr)"/>
+          <line class="rise" style="animation-delay:1.8s" x1="420" y1="282" x2="420" y2="200" marker-end="url(#arr)"/>
+        </g>
+        <rect x="48" y="176" width="12" height="76" rx="6" fill="none" stroke="#94a3b8" stroke-width="2"/>
+        <rect x="52" y="196" width="4" height="52" fill="#ff6d00"/>
+        <circle cx="54" cy="254" r="9" fill="#ff6d00"/>
+        <text x="70" y="246" fill="#e8ecf4" font-size="13">海温 ≥ 26.5℃</text>
+      </g>
+
+      <!-- ② 凝结释放潜热 -->
+      <g class="stg" id="s2">
+        <line class="rise" x1="280" y1="282" x2="280" y2="180" stroke="#7dd3fc" stroke-width="3" fill="none" marker-end="url(#arr)"/>
+        <line class="rise" style="animation-delay:1.1s" x1="370" y1="282" x2="370" y2="180" stroke="#7dd3fc" stroke-width="3" fill="none" marker-end="url(#arr)"/>
+        <g class="puff" fill="#e8edf5">
+          <ellipse cx="252" cy="122" rx="46" ry="24"/>
+          <ellipse cx="322" cy="96" rx="60" ry="30"/>
+          <ellipse cx="392" cy="122" rx="48" ry="24"/>
+          <ellipse cx="322" cy="134" rx="72" ry="26"/>
+        </g>
+        <circle class="blink" cx="322" cy="116" r="34" fill="url(#warm)"/>
+        <g stroke="#7dd3fc" stroke-width="2.5" stroke-linecap="round">
+          <line class="rain" x1="276" y1="156" x2="272" y2="180"/>
+          <line class="rain" style="animation-delay:.3s" x1="306" y1="160" x2="302" y2="184"/>
+          <line class="rain" style="animation-delay:.6s" x1="338" y1="160" x2="334" y2="184"/>
+          <line class="rain" style="animation-delay:.9s" x1="368" y1="156" x2="364" y2="180"/>
+        </g>
+        <text x="396" y="86" fill="#fbbf24" font-size="12">潜热释放</text>
+      </g>
+
+      <!-- ③ 气流旋转启动 -->
+      <g class="stg" id="s3">
+        <circle cx="320" cy="180" r="14" fill="none" stroke="#fbbf24" stroke-width="2"/>
+        <text x="320" y="185" fill="#fbbf24" font-size="13" text-anchor="middle">低</text>
+        <g class="spinSlow" stroke="#7dd3fc" stroke-width="3" fill="none">
+          <path d="M 320 100 A 80 80 0 0 0 240 180" marker-end="url(#arr)"/>
+          <path d="M 240 180 A 80 80 0 0 0 320 260" marker-end="url(#arr)"/>
+          <path d="M 320 260 A 80 80 0 0 0 400 180" marker-end="url(#arr)"/>
+          <path d="M 400 180 A 80 80 0 0 0 320 100" marker-end="url(#arr)"/>
+          <path d="M 320 60 A 120 120 0 0 0 200 180" marker-end="url(#arr)" opacity=".45"/>
+          <path d="M 440 180 A 120 120 0 0 0 320 300" marker-end="url(#arr)" opacity=".45"/>
+        </g>
+        <g fill="#dbe6f2" opacity=".9">
+          <ellipse cx="205" cy="105" rx="34" ry="16"/>
+          <ellipse cx="445" cy="120" rx="38" ry="18"/>
+          <ellipse cx="230" cy="255" rx="36" ry="16"/>
+          <ellipse cx="430" cy="250" rx="30" ry="14"/>
+        </g>
+        <text x="462" y="70" fill="#8fa3bf" font-size="12">北半球：逆时针旋转</text>
+      </g>
+
+      <!-- ④ 螺旋云带组织化 -->
+      <g class="stg" id="s4">
+        <g class="spin" fill="none" stroke-linecap="round">
+          <path d="M 366 180 A 46 46 0 1 1 300 216" stroke="#f1f6fc" stroke-width="17"/>
+          <path d="M 320 108 A 72 72 0 1 1 252 208" stroke="#dbe9f6" stroke-width="19"/>
+          <path d="M 418 180 A 98 98 0 1 1 258 252" stroke="#c9def1" stroke-width="21"/>
+          <path d="M 320 54 A 126 126 0 1 1 200 234" stroke="#b7d3ec" stroke-width="22"/>
+          <path d="M 470 180 A 150 150 0 1 1 236 290" stroke="#a5c8e6" stroke-width="23"/>
+        </g>
+        <circle cx="320" cy="180" r="12" fill="none" stroke="#fbbf24" stroke-width="2" stroke-dasharray="3 3"/>
+      </g>
+
+      <!-- ⑤ 风眼形成 -->
+      <g class="stg" id="s5">
+        <g class="spin" fill="none" stroke-linecap="round">
+          <path d="M 352 180 A 32 32 0 1 1 300 200" stroke="#ffffff" stroke-width="15"/>
+          <path d="M 320 124 A 56 56 0 1 1 266 196" stroke="#eef5fc" stroke-width="17"/>
+          <path d="M 404 180 A 84 84 0 1 1 262 238" stroke="#dfecf8" stroke-width="19"/>
+          <path d="M 320 68 A 112 112 0 1 1 218 244" stroke="#cde2f3" stroke-width="20"/>
+          <path d="M 458 180 A 138 138 0 1 1 240 292" stroke="#bad7ee" stroke-width="21"/>
+        </g>
+        <circle cx="320" cy="180" r="17" fill="#0e2036" stroke="#ffffff" stroke-width="1.5" opacity=".95"/>
+        <line class="sink" x1="320" y1="168" x2="320" y2="192" stroke="#fbbf24" stroke-width="3" marker-end="url(#arrO)"/>
+        <text x="320" y="150" fill="#fbbf24" font-size="12" text-anchor="middle">风眼</text>
+        <text x="452" y="116" fill="#8fa3bf" font-size="12">眼墙风力最强</text>
+      </g>
+    </svg>
+
+    <div class="cap"><b id="capTitle"></b><p id="capText"></p></div>
+    <div class="howNav">
+      <button id="howPrev">‹ 上一步</button>
+      <div class="dots" id="howDots"></div>
+      <button id="howNext">下一步 ›</button>
+    </div>
+  </div>
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -161,7 +343,7 @@ const EnhanceLayer = L.TileLayer.extend({
       const img = new Image();
       img.crossOrigin = 'anonymous';
       img.onload  = () => {
-        if (this._imgCache.size > 200) {          // 限制缓存体积
+        if (this._imgCache.size > 400) {          // 限制缓存体积
           this._imgCache.delete(this._imgCache.keys().next().value);
         }
         this._imgCache.set(url, img);
@@ -174,16 +356,23 @@ const EnhanceLayer = L.TileLayer.extend({
   }
 });
 
-/* ---------------- 时间轴：最近 4 小时，每 10 分钟一帧 ---------------- */
-const FRAME_N = 24, STEP = 600000, LATENCY = 50 * 60000;
-let frames = [], idx = FRAME_N - 1;
+/* ---------------- 时间轴：实时（10 分钟/帧）或 5 天回放（1 小时/帧） ---------------- */
+const LATENCY = 50 * 60000;
+const MODES = {
+  live: { step: 10 * 60000, count: 24  },   // 实时：最近 4 小时
+  hist: { step: 60 * 60000, count: 120 }    // 回放：最近 5 天，可看到台风成形过程
+};
+let mode = 'live';
+let frames = [], idx = 0;
 
 function buildFrames() {
-  const latest = Math.floor((Date.now() - LATENCY) / STEP) * STEP;
+  const m = MODES[mode];
+  const latest = Math.floor((Date.now() - LATENCY) / m.step) * m.step;
   const wasLast = (idx === frames.length - 1);
   frames = [];
-  for (let i = FRAME_N - 1; i >= 0; i--) frames.push(latest - i * STEP);
-  if (wasLast) idx = FRAME_N - 1;
+  for (let i = m.count - 1; i >= 0; i--) frames.push(latest - i * m.step);
+  if (wasLast || idx >= frames.length) idx = frames.length - 1;
+  document.getElementById('tl').max = frames.length - 1;
 }
 
 /* 帧可用性探测：GIBS 个别时刻缺图，提前标记，避免切到空白帧 */
@@ -275,12 +464,26 @@ function playTick() {
   fallbackTO = setTimeout(playTick, 5000);      // 网络异常时兜底推进
 }
 
-$('play').onclick = () => {
-  playing = !playing;
-  $('play').textContent = playing ? '⏸' : '▶';
-  if (playing) playTick();
-  else { clearTimeout(stepTO); clearTimeout(fallbackTO); }
-};
+function setPlaying(on) {
+  playing = on;
+  $('play').textContent = on ? '⏸' : '▶';
+  clearTimeout(stepTO); clearTimeout(fallbackTO);
+  if (on) playTick();
+}
+$('play').onclick = () => setPlaying(!playing);
+
+/* 时间范围切换：实时 / 5 天回放 */
+function setMode(m) {
+  if (mode === m) return;
+  mode = m;
+  setPlaying(false);
+  document.querySelectorAll('.seg button').forEach(b => b.classList.toggle('on', b.dataset.m === m));
+  buildFrames();
+  probeFrames();
+  setFrame(frames.length - 1);
+}
+document.querySelectorAll('.seg button').forEach(b => b.onclick = () => setMode(b.dataset.m));
+
 $('tl').oninput  = e => setFrame(+e.target.value);
 $('enh').onchange = e => layers.forEach(l => { l.options.enhanced = e.target.checked; l.redraw(); });
 $('op').oninput  = e => { userOpacity = e.target.value / 100; layers[cur].setOpacity(userOpacity); };
@@ -295,10 +498,42 @@ $('op').oninput  = e => { userOpacity = e.target.value / 100; layers[cur].setOpa
   }
 })();
 
+/* ---------------- 台风形成过程图解 ---------------- */
+const STAGES = [
+  { t: '① 暖洋面蒸发',    d: '热带洋面温度超过 26.5℃ 时，大量海水蒸发，暖湿空气不断抬升。云图对照：洋面上零星冒出的白色对流云点。' },
+  { t: '② 凝结释放潜热',  d: '水汽在高空凝结成云并释放潜热，空气被加热后上升得更猛烈，近海面形成低压中心。云图对照：云团越来越密、云顶越来越亮（颜色向黄红发展）。' },
+  { t: '③ 气流旋转启动',  d: '四周空气向低压中心补充，受地转偏向力作用（北半球逆时针）开始旋转。云图对照：云系开始出现弯曲的螺旋结构。' },
+  { t: '④ 螺旋云带组织化', d: '上升—凝结—加热形成正反馈，云系组织成螺旋雨带，风力持续增强，台风诞生。云图对照：清晰的螺旋云带绕中心旋转。' },
+  { t: '⑤ 风眼形成、成熟', d: '中心空气下沉增温、云消风散，形成风眼；风眼周围的眼墙才是风力最强之处。云图对照：螺旋中心出现圆润的风眼，眼墙呈红紫色。' }
+];
+let stageIdx = 0;
+const dotsEl = $('howDots');
+STAGES.forEach((_, i) => {
+  const s = document.createElement('span');
+  s.onclick = () => showStage(i);
+  dotsEl.appendChild(s);
+});
+function showStage(i) {
+  stageIdx = Math.max(0, Math.min(STAGES.length - 1, i));
+  STAGES.forEach((_, k) => $('s' + (k + 1)).classList.toggle('on', k === stageIdx));
+  [...dotsEl.children].forEach((d, k) => d.classList.toggle('on', k === stageIdx));
+  $('capTitle').textContent = STAGES[stageIdx].t;
+  $('capText').textContent  = STAGES[stageIdx].d;
+  $('howPrev').disabled = stageIdx === 0;
+  $('howNext').disabled = stageIdx === STAGES.length - 1;
+}
+$('howPrev').onclick = () => showStage(stageIdx - 1);
+$('howNext').onclick = () => showStage(stageIdx + 1);
+$('how').onclick      = () => { $('howOverlay').classList.add('show'); showStage(0); };
+$('howClose').onclick = () => $('howOverlay').classList.remove('show');
+$('howOverlay').onclick = e => { if (e.target === e.currentTarget) $('howOverlay').classList.remove('show'); };
+document.addEventListener('keydown', e => { if (e.key === 'Escape') $('howOverlay').classList.remove('show'); });
+showStage(0);
+
 /* ---------------- 启动 ---------------- */
 buildFrames();
 probeFrames();
-setFrame(FRAME_N - 1);
+setFrame(frames.length - 1);
 setInterval(() => { buildFrames(); probeFrames(); }, 5 * 60000); // 每 5 分钟刷新可用帧
 </script>
 </body>
