@@ -344,16 +344,19 @@ function frame(now) {
     ctx.fillRect(0, seaTop - 180, W, 180);
   }
 
-  /* 台风 */
+  /* 台风：中心压在海平面上，从海上生成（下半部分被海面遮挡） */
   const tyA = smoothstep(0.02, 0.4, s);
+  const cover = Math.min(W * 1.05, H * 1.5);
+  const scale = (cover / TY_SZ) * (0.5 + 0.7 * s);
+  const tyR = TY_SZ * scale / 2;
+  const tyCx = W * 0.62 + mnx * 7;
+  const tyCy = seaTop - tyR * 0.22 + mny * 5;
   if (tyA > 0.001) {
     ctx.save();
     ctx.globalAlpha = tyA;
-    const cover = Math.min(W * 1.05, H * 1.5);
-    const scale = (cover / TY_SZ) * (0.5 + 0.7 * s);
-    ctx.translate(W * 0.6 + mnx * 7, H * 0.34 + mny * 5);
+    ctx.translate(tyCx, tyCy);
     ctx.rotate(tyAngle);
-    ctx.drawImage(tyCanvas, -TY_SZ * scale / 2, -TY_SZ * scale / 2, TY_SZ * scale, TY_SZ * scale);
+    ctx.drawImage(tyCanvas, -tyR, -tyR, tyR * 2, tyR * 2);
     ctx.restore();
   }
   tyAngle -= dt * (0.12 + 0.55 * s);
@@ -372,6 +375,21 @@ function frame(now) {
   ctx.fillRect(0, seaTop, W, H - seaTop);
   ctx.fillStyle = `rgba(255,255,255,${0.12 * (1 - s * 0.5)})`;
   ctx.fillRect(0, seaTop, W, 1);
+
+  /* 台风正下方海面的风暴阴影 */
+  if (s > 0.02) {
+    ctx.save();
+    ctx.translate(tyCx, seaTop + (H - seaTop) * 0.25);
+    ctx.scale(1, 0.32);
+    const sg = ctx.createRadialGradient(0, 0, 0, 0, 0, tyR * 0.85);
+    sg.addColorStop(0, `rgba(8,14,22,${0.4 * s})`);
+    sg.addColorStop(1, 'rgba(8,14,22,0)');
+    ctx.fillStyle = sg;
+    ctx.beginPath();
+    ctx.arc(0, 0, tyR * 0.85, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
 
   /* 浪 */
   const rows = 6;
