@@ -130,6 +130,7 @@
     <div class="lab"><span>海面 / 暖云</span><span>高云</span><span>强对流云顶</span></div>
   </div>
 
+  <button class="howbtn" id="watch" style="border-color:rgba(255,138,101,.4);background:rgba(255,138,101,.1);color:#ffab91">🎬 在地图上看台风形成</button>
   <button class="howbtn" id="how">🌀 台风是怎么形成的？</button>
 
   <div class="src">数据：NASA GIBS · 向日葵-8/9 红外 Band13｜实时 10 分钟/帧，回放 1 小时/帧<br>增强：红外增强配色（Dvorak 风格），颜色越艳云顶越高</div>
@@ -483,6 +484,15 @@ function setMode(m) {
   setFrame(frames.length - 1);
 }
 document.querySelectorAll('.seg button').forEach(b => b.onclick = () => setMode(b.dataset.m));
+
+/* 一键观看台风形成：切到 5 天回放，镜头定位到台风生成区，从头自动播放 */
+$('watch').onclick = () => {
+  $('howOverlay').classList.remove('show');
+  setMode('hist');                                   // 切到近 5 天回放
+  map.flyTo([16, 135], 5, { duration: 1.2 });        // 西北太平洋台风“摇篮”
+  setFrame(0);                                       // 从 5 天前开始
+  setPlaying(true);                                  // 自动播放形成过程
+};
 
 $('tl').oninput  = e => setFrame(+e.target.value);
 $('enh').onchange = e => layers.forEach(l => { l.options.enhanced = e.target.checked; l.redraw(); });
